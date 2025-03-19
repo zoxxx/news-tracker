@@ -1,0 +1,21 @@
+<html>
+    <body>
+        <div id="news-tracker-container"></div>
+        <script type="module">
+        import NewsTracker from './news-tracker.js';
+
+        const tracker = new NewsTracker({
+            containerSelector: '#news-tracker-container',
+            newsData: [
+                {"title": "Breaking: Major Technology Breakthrough in Renewable Energy", "category": "Technology"},
+                {"title": "Global Markets Show Strong Recovery Signs", "category": "Finance"},
+                {"title": "New Health Guidelines Released by WHO", "category": "Health"},
+                {"title": "Sports: Championship Finals Set New Viewership Record", "category": "Sports"},
+                {"title": "Entertainment: Award Season Begins with Surprising Nominations", "category": "Entertainment"}
+            ],
+            scrollSpeed: 30,
+            autoStart: true
+            });
+        </script>
+    </body>
+</html>
