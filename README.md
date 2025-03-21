@@ -1,14 +1,9 @@
 **README.md**
 
-```markdown
+
 # NewsTracker Module 📰
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
-
 A customizable, themeable news ticker component for continuous scrolling content displays. Easily integrate into any web project.
-
-![NewsTracker Demo](demo-screenshot.png)
 
 ## Features
 
@@ -88,7 +83,7 @@ new NewsTracker({ themes: customThemes });
 
 1. Clone repository
    ```bash
-   git clone https://github.com/yourusername/news-tracker.git
+   git clone https://github.com/zoxxx/news-tracker.git
    ```
 
 2. Start local server
@@ -103,5 +98,4 @@ Pull requests welcome! For major changes, please open an issue first.
 
 ## License
 
-MIT © [Your Name]
-```
+MIT © [zoxxx]

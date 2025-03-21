@@ -1,6 +1,6 @@
 /**
  * NewsTracker - A modular scrolling news ticker with theme support
- * @version 1.0.0
+ * @version 1.1.0
  * @license MIT
  */
 class NewsTracker {
@@ -11,12 +11,9 @@ class NewsTracker {
    * @property {Object} themes - Custom theme definitions
    * @property {number} scrollSpeed - Animation duration in seconds
    * @property {boolean} autoStart - Whether to start animation immediately
+   * @property {number} idleTimeout - Seconds of inactivity before restarting
    */
 
-  /**
-   * Default configuration
-   * @type {NewsTrackerOptions}
-   */
   static defaultOptions = {
     containerSelector: '#news-tracker-container',
     newsData: [],
@@ -27,19 +24,22 @@ class NewsTracker {
       green: { background: '#e8f5e9', text: '#2e7d32', itemBg: '#c8e6c9', itemBorder: '#a5d6a7' },
       modern: { background: '#212121', text: '#00ff9d', itemBg: '#424242', itemBorder: '#00ff9d' }
     },
-    scrollSpeed: 40,
-    autoStart: true
+    scrollSpeed: 100,
+    autoStart: true,
+    idleTimeout: 5
   };
 
-  /**
-   * Create a NewsTracker instance
-   * @param {NewsTrackerOptions} options - Configuration options
-   */
   constructor(options = {}) {
     this.config = { ...NewsTracker.defaultOptions, ...options };
     this.container = document.querySelector(this.config.containerSelector);
     this.currentTheme = 'default';
-    this.isRunning = false;
+    this.isScrolling = false;
+    this.scrollPosition = 0;
+    this.contentWidth = 0;
+    this.animationFrameId = null;
+    this.isDragging = false;
+    this.isHovered = false;
+    this.idleTimeoutId = null;
     
     if (!this.container) {
       console.error('NewsTracker: Container element not found');
@@ -50,9 +50,6 @@ class NewsTracker {
     this.config.autoStart && this.start();
   }
 
-  /**
-   * Initialize the ticker DOM and styles
-   */
   initialize() {
     this.injectStyles();
     this.createTickerStructure();
@@ -61,9 +58,6 @@ class NewsTracker {
     this.addEventListeners();
   }
 
-  /**
-   * Create base DOM structure
-   */
   createTickerStructure() {
     this.container.innerHTML = `
       <div class="nt-theme-selector">
@@ -76,50 +70,37 @@ class NewsTracker {
       <div class="nt-ticker-container">
         <div class="nt-ticker-wrapper">
           <div class="nt-ticker-content"></div>
+          <div class="nt-ticker-content nt-cloned"></div>
         </div>
       </div>
     `;
   }
 
-  /**
-   * Generate news items from provided data
-   */
   generateNewsItems() {
     const content = this.container.querySelector('.nt-ticker-content');
+    const clone = this.container.querySelector('.nt-cloned');
     content.innerHTML = '';
     
-    // Create original items
-    const fragment = document.createDocumentFragment();
     this.config.newsData.forEach(article => {
-      fragment.appendChild(this.createNewsItem(article));
+      content.appendChild(this.createNewsItem(article));
     });
-    content.appendChild(fragment);
     
-    // Clone items for seamless loop
-    const clone = content.cloneNode(true);
-    clone.classList.add('nt-cloned');
-    content.parentNode.appendChild(clone);
+    clone.innerHTML = content.innerHTML;
+    this.contentElements = [content, clone];
+    this.contentWidth = content.offsetWidth;
   }
 
-  /**
-   * Create individual news item element
-   * @param {Object} article 
-   * @returns {HTMLElement}
-   */
   createNewsItem(article) {
     const item = document.createElement('div');
     item.className = 'nt-news-item';
     item.innerHTML = `
       <strong>[${article.category}]</strong>
       ${article.title}
-      <span class="nt-timestamp">${this.getTimeStamp()}</span>
+      <a href="${article.url}">[more]</a>
     `;
     return item;
   }
 
-  /**
-   * Inject required CSS styles
-   */
   injectStyles() {
     const style = document.createElement('style');
     style.textContent = `
@@ -129,23 +110,19 @@ class NewsTracker {
         position: relative;
         padding: 15px 0;
       }
-
       .nt-ticker-wrapper {
         display: inline-block;
         position: relative;
       }
-
       .nt-ticker-content {
         display: inline-block;
-        animation: nt-scroll ${this.config.scrollSpeed}s linear infinite;
+        position: relative;
       }
-
-      .nt-ticker-content.nt-cloned {
+      .nt-cloned {
         position: absolute;
         left: 100%;
         top: 0;
       }
-
       .nt-news-item {
         display: inline-block;
         margin-right: 40px;
@@ -153,98 +130,167 @@ class NewsTracker {
         border-radius: 5px;
         transition: all 0.3s ease;
       }
-
       .nt-theme-selector {
         position: absolute;
         top: 10px;
         right: 10px;
         z-index: 1000;
       }
-
-      @keyframes nt-scroll {
-        0% { transform: translateX(0); }
-        100% { transform: translateX(-50%); }
-      }
     `;
     document.head.appendChild(style);
   }
 
-  /**
-   * Set active theme
-   * @param {string} themeName 
-   */
   setTheme(themeName) {
-    if (!this.config.themes[themeName]) {
-      console.warn(`NewsTracker: Theme "${themeName}" not found`);
-      return;
-    }
-
+    if (!this.config.themes[themeName]) return;
     this.currentTheme = themeName;
     const theme = this.config.themes[themeName];
     this.container.style.backgroundColor = theme.background;
     this.container.style.color = theme.text;
-    
     this.container.querySelectorAll('.nt-news-item').forEach(item => {
       item.style.backgroundColor = theme.itemBg;
       item.style.border = `1px solid ${theme.itemBorder}`;
     });
   }
 
-  /**
-   * Start the ticker animation
-   */
   start() {
-    this.isRunning = true;
-    this.container.querySelector('.nt-ticker-content').style.animationPlayState = 'running';
+    if (this.isScrolling || !this.contentWidth) return;
+    this.isScrolling = true;
+    this.lastFrameTime = performance.now();
+    this.animationLoop();
   }
 
-  /**
-   * Pause the ticker animation
-   */
+  animationLoop() {
+    if (!this.isScrolling) return;
+    
+    const now = performance.now();
+    const deltaTime = now - this.lastFrameTime;
+    this.lastFrameTime = now;
+
+    const pixelsPerSecond = (this.contentWidth / 2) / this.config.scrollSpeed;
+    this.scrollPosition += (deltaTime / 1000) * pixelsPerSecond;
+
+    if (this.scrollPosition >= this.contentWidth) {
+      this.scrollPosition -= this.contentWidth;
+    }
+
+    this.applyScrollPosition();
+    this.animationFrameId = requestAnimationFrame(() => this.animationLoop());
+  }
+
+  applyScrollPosition() {
+    const translateX = -this.scrollPosition;
+    this.contentElements.forEach(el => {
+      el.style.transform = `translateX(${translateX}px)`;
+    });
+  }
+
   pause() {
-    this.isRunning = false;
-    this.container.querySelector('.nt-ticker-content').style.animationPlayState = 'paused';
+    this.isScrolling = false;
+    if (this.animationFrameId) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
   }
 
-  /**
-   * Update news data
-   * @param {Object[]} newData 
-   */
   updateNews(newData) {
     this.config.newsData = newData;
     this.generateNewsItems();
   }
 
-  /**
-   * Add event listeners
-   */
   addEventListeners() {
     this.container.querySelector('.nt-theme-select').addEventListener('change', (e) => {
       this.setTheme(e.target.value);
     });
 
+    // Hover handling
+    this.container.addEventListener('mouseenter', () => {
+      this.isHovered = true;
+      this.pause();
+    });
+    this.container.addEventListener('mouseleave', () => {
+      this.isHovered = false;
+      if (!this.isDragging) this.start();
+    });
+
+    // Touch events
+    this.container.addEventListener('touchstart', (e) => this.handleTouchStart(e));
+    this.container.addEventListener('touchmove', (e) => this.handleTouchMove(e));
+    this.container.addEventListener('touchend', () => this.handleTouchEnd());
+
+    // Mouse drag events
+    this.container.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+    this.container.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+    this.container.addEventListener('mouseup', () => this.handleMouseUp());
+    this.container.addEventListener('mouseleave', () => this.handleMouseUp());
+
+    // Idle timer reset
+    this.container.addEventListener('mousemove', this.recordInteraction.bind(this));
+    this.container.addEventListener('touchmove', this.recordInteraction.bind(this));
+
     window.addEventListener('resize', () => {
-      const ticker = this.container.querySelector('.nt-ticker-content');
-      ticker.style.animation = 'none';
-      setTimeout(() => {
-        ticker.style.animation = `nt-scroll ${this.config.scrollSpeed}s linear infinite`;
-      }, 10);
+      this.contentWidth = this.container.querySelector('.nt-ticker-content').offsetWidth;
     });
   }
 
-  /**
-   * Generate timestamp
-   * @returns {string}
-   */
-  getTimeStamp() {
-    const now = new Date();
-    return `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
+  handleTouchStart(e) {
+    this.isDragging = true;
+    this.startX = e.touches[0].clientX;
+    this.startScrollPosition = this.scrollPosition;
+    this.pause();
+    this.recordInteraction();
+    e.preventDefault();
   }
 
-  /**
-   * Destroy the instance and clean up
-   */
+  handleTouchMove(e) {
+    if (!this.isDragging) return;
+    const currentX = e.touches[0].clientX;
+    const deltaX = currentX - this.startX;
+    this.scrollPosition = Math.max(0, Math.min(this.startScrollPosition - deltaX, this.contentWidth));
+    this.applyScrollPosition();
+    this.recordInteraction();
+    e.preventDefault();
+  }
+
+  handleTouchEnd() {
+    this.isDragging = false;
+    this.recordInteraction();
+  }
+
+  handleMouseDown(e) {
+    this.isDragging = true;
+    this.startX = e.clientX;
+    this.startScrollPosition = this.scrollPosition;
+    this.pause();
+    this.recordInteraction();
+    e.preventDefault();
+  }
+
+  handleMouseMove(e) {
+    if (!this.isDragging) return;
+    const currentX = e.clientX;
+    const deltaX = currentX - this.startX;
+    this.scrollPosition = Math.max(0, Math.min(this.startScrollPosition - deltaX, this.contentWidth));
+    this.applyScrollPosition();
+    this.recordInteraction();
+    e.preventDefault();
+  }
+
+  handleMouseUp() {
+    this.isDragging = false;
+    this.recordInteraction();
+  }
+
+  recordInteraction() {
+    clearTimeout(this.idleTimeoutId);
+    this.idleTimeoutId = setTimeout(() => {
+      if (!this.isDragging && !this.isHovered) {
+        this.start();
+      }
+    }, this.config.idleTimeout * 1000);
+  }
+
   destroy() {
+    this.pause();
     window.removeEventListener('resize', this.handleResize);
     this.container.innerHTML = '';
     this.container.style = '';
